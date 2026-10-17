@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import AdminPage from './Admin/AdminPage'
+import ResourceAdmin from './Admin/ResourceAdmin'
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -14,16 +16,10 @@ function App() {
   }, [])
 
   return (
-    <main>
-      <h1>My Idea</h1>
-      {error && <p>Could not reach the API: {error}</p>}
-      {!health && !error && <p>Checking the server...</p>}
-      {health && (
-        <p>
-          API: {health.status} · Database: {health.database}
-        </p>
-      )}
-    </main>
+    <>
+      {/* <ResourceAdmin /> */}
+      <AdminPage />
+    </>
   )
 }
 
