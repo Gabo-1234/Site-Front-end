@@ -1,8 +1,8 @@
-const API_URL = import.meta.env.VITE_API_URL
+import { API_URL, authFetch } from "./api";
 
 // 1. Ask our server for a signature  2. Send the file straight to Cloudinary
 export async function uploadImage(file) {
-	const signRes = await fetch(`${API_URL}/api/uploads/sign`, { method: 'POST' })
+	const signRes = await authFetch(`${API_URL}/api/uploads/sign`, { method: 'POST' })
 	if (!signRes.ok) throw new Error('Could not get an upload signature')
 	const { cloudName, apiKey, timestamp, folder, signature } = await signRes.json()
 

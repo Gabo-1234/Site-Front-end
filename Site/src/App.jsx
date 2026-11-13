@@ -1,26 +1,13 @@
-import { useEffect, useState } from 'react'
-import AdminPage from './Admin/AdminPage'
-import ResourceAdmin from './Admin/ResourceAdmin'
-
-const API_URL = import.meta.env.VITE_API_URL
+import AdminPage from "./Admin/AdminPage";
+import Home from "./Pages/Main Page";
+import ProductPage from "./Pages/ProductPage";
 
 function App() {
-  const [health, setHealth] = useState(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then((res) => res.json())
-      .then(setHealth)
-      .catch((err) => setError(err.message))
-  }, [])
-
-  return (
-    <>
-      {/* <ResourceAdmin /> */}
-      <AdminPage />
-    </>
-  )
+	const path = window.location.pathname;
+	if (path === "/admin" || path === "/admin/") return <AdminPage />;
+	const productRoute = path.match(/^\/products\/([^/]+)\/?$/);
+	if (productRoute) return <ProductPage productId={productRoute[1]} />;
+	return <Home />;
 }
 
-export default App
+export default App;

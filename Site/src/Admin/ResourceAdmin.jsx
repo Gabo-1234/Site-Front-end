@@ -1,190 +1,215 @@
-import { useEffect, useState } from 'react'
-import { uploadImage } from './uploadImage'
+import { useEffect, useState } from "react";
+import { API_URL, authFetch } from "./api";
+import { uploadImage } from "./uploadImage";
 
-const API_URL = import.meta.env.VITE_API_URL
-
-// Fills a form with the values of an item (or empty values for a new one)
 function emptyForm(fields) {
-	const form = {}
-	for (const f of fields) {
-		if (f.type === 'checkbox') form[f.name] = true
-		else if (f.type === 'images') form[f.name] = []
-		else form[f.name] = ''
+	const form = {};
+	for (const field of fields) {
+		if (field.type === "checkbox") form[field.name] = true;
+		else if (field.type === "images") form[field.name] = [];
+		else form[field.name] = "";
 	}
-	return form
+	return form;
 }
 
-// A populated reference comes back as an object. The form needs only its id.
 function toFormValue(field, value) {
-	if (value === undefined || value === null) return emptyForm([field])[field.name]
-	if (field.type === 'select' && typeof value === 'object') return value._id
-	return value
+	if (value === undefined || value === null) return emptyForm([field])[field.name];
+	if (field.type === "select" && typeof value === "object") return value._id;
+	return value;
 }
 
-export default function ResourceAdmin({ resource, title, fields, columns }) {
-	const [items, setItems] = useState([])
-	const [options, setOptions] = useState({}) // for select fields
-	const [form, setForm] = useState(emptyForm(fields))
-	const [editingId, setEditingId] = useState(null)
-	const [error, setError] = useState('')
-	const [uploading, setUploading] = useState(false)
+export default function ResourceAdmin({ resource, title, fields, columns, filters = [] }) {
+	const [items, setItems] = useState([]);
+	const [options, setOptions] = useState({});
+	const [form, setForm] = useState(emptyForm(fields));
+	const [editingId, setEditingId] = useState(null);
+	const [error, setError] = useState("");
+	const [uploading, setUploading] = useState(false);
+	const [reloadKey, setReloadKey] = useState(0);
+	const [filterValues, setFilterValues] = useState({});
+	const [page, setPage] = useState(1);
+	const [totalPages, setTotalPages] = useState(1);
 
-	const [reloadKey, setReloadKey] = useState(0)
-
-	// Load the list again whenever reloadKey changes
 	useEffect(() => {
-		fetch(`${API_URL}/api/${resource}`)
-			.then((res) => res.json())
-			.then(setItems)
-			.catch((err) => setError(err.message))
-	}, [resource, reloadKey])
-
-	// Load the choices for every select field
-	useEffect(() => {
-		for (const f of fields.filter((f) => f.type === 'select')) {
-			fetch(`${API_URL}/api/${f.optionsFrom}`)
-				.then((res) => res.json())
-				.then((list) => setOptions((prev) => ({ ...prev, [f.name]: list })))
+		const controller = new AbortController();
+		async function loadItems() {
+			setError("");
+			const params = new URLSearchParams({ page: String(page), limit: "10" });
+			if (resource === "products") params.set("includeInactive", "true");
+			for (const [key, value] of Object.entries(filterValues)) {
+				if (value) params.set(key, value);
+			}
+			try {
+				const response = await authFetch(`${API_URL}/api/${resource}?${params}`, { signal: controller.signal });
+				const data = await response.json();
+				if (!response.ok) throw new Error(data.message || `Could not load ${title.toLowerCase()}.`);
+				setItems(Array.isArray(data) ? data : data.items);
+				setTotalPages(Array.isArray(data) ? 1 : Math.max(1, data.totalPages));
+			} catch (requestError) {
+				if (requestError.name !== "AbortError") setError(requestError.message || "Could not connect to the server.");
+			}
 		}
-	}, [fields])
+		loadItems();
+		return () => controller.abort();
+	}, [resource, title, reloadKey, page, filterValues]);
 
-	function load() {
-		setReloadKey((k) => k + 1)
-	}
+	useEffect(() => {
+		const selectFields = [...fields, ...filters].filter((field) => field.type === "select");
+		for (const field of selectFields) {
+			if (!field.optionsFrom) continue;
+			authFetch(`${API_URL}/api/${field.optionsFrom}`)
+				.then(async (response) => {
+					const data = await response.json();
+					if (!response.ok) throw new Error(data.message || `Could not load ${field.optionsFrom}.`);
+					setOptions((previous) => ({ ...previous, [field.name]: Array.isArray(data) ? data : data.items }));
+				})
+				.catch((requestError) => setError(requestError.message));
+		}
+	}, [fields, filters]);
 
 	function setField(name, value) {
-		setForm((prev) => ({ ...prev, [name]: value }))
-	}
-
-	function startEdit(item) {
-		const next = {}
-		for (const f of fields) next[f.name] = toFormValue(f, item[f.name])
-		setForm(next)
-		setEditingId(item._id)
-		setError('')
+		setForm((previous) => ({ ...previous, [name]: value }));
 	}
 
 	function reset() {
-		setForm(emptyForm(fields))
-		setEditingId(null)
+		setForm(emptyForm(fields));
+		setEditingId(null);
+	}
+
+	function startEdit(item) {
+		const next = {};
+		for (const field of fields) next[field.name] = toFormValue(field, item[field.name]);
+		setForm(next);
+		setEditingId(item._id);
+		setError("");
 	}
 
 	async function handleFiles(field, files) {
-		setUploading(true)
-		setError('')
+		setUploading(true);
+		setError("");
 		try {
-			const uploaded = []
-			for (const file of files) uploaded.push(await uploadImage(file))
-			setField(field.name, [...form[field.name], ...uploaded])
-		} catch (err) {
-			setError(err.message)
+			const uploaded = [];
+			for (const file of files) uploaded.push(await uploadImage(file));
+			setField(field.name, [...form[field.name], ...uploaded]);
+		} catch (requestError) {
+			setError(requestError.message);
 		} finally {
-			setUploading(false)
+			setUploading(false);
 		}
 	}
 
-	async function handleSubmit(e) {
-		e.preventDefault()
-		setError('')
-		// numbers must be sent as numbers, empty text fields are left out
-		const body = {}
-		for (const f of fields) {
-			const v = form[f.name]
-			if (f.type === 'number') body[f.name] = v === '' ? undefined : Number(v)
-			else if (v === '' && f.type !== 'checkbox') body[f.name] = undefined
-			else body[f.name] = v
+	async function handleSubmit(event) {
+		event.preventDefault();
+		setError("");
+		const body = {};
+		for (const field of fields) {
+			const value = form[field.name];
+			if (field.type === "number") body[field.name] = value === "" ? undefined : Number(value);
+			else if (value === "" && field.type !== "checkbox") body[field.name] = undefined;
+			else body[field.name] = value;
 		}
-		const res = await fetch(`${API_URL}/api/${resource}${editingId ? `/${editingId}` : ''}`, {
-			method: editingId ? 'PUT' : 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		})
-		const data = await res.json()
-		if (!res.ok) return setError(data.message || 'Something went wrong')
-		reset()
-		load()
+		try {
+			const response = await authFetch(`${API_URL}/api/${resource}${editingId ? `/${editingId}` : ""}`, {
+				method: editingId ? "PUT" : "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			const data = await response.json();
+			if (!response.ok) throw new Error(data.message || "Something went wrong.");
+			reset();
+			setReloadKey((key) => key + 1);
+		} catch (requestError) {
+			setError(requestError.message || "Could not save this item.");
+		}
 	}
 
 	async function handleDelete(item) {
-		if (!window.confirm('Delete this item?')) return
-		const res = await fetch(`${API_URL}/api/${resource}/${item._id}`, { method: 'DELETE' })
-		const data = await res.json()
-		if (!res.ok) return setError(data.message || 'Could not delete')
-		load()
+		if (!window.confirm("Delete this item?")) return;
+		setError("");
+		try {
+			const response = await authFetch(`${API_URL}/api/${resource}/${item._id}`, { method: "DELETE" });
+			const data = await response.json();
+			if (!response.ok) throw new Error(data.message || "Could not delete this item.");
+			setReloadKey((key) => key + 1);
+		} catch (requestError) {
+			setError(requestError.message || "Could not delete this item.");
+		}
+	}
+
+	function renderField(field) {
+		if (field.type === "textarea") return <textarea value={form[field.name]} onChange={(event) => setField(field.name, event.target.value)} />;
+		if (field.type === "checkbox") return <input type="checkbox" checked={!!form[field.name]} onChange={(event) => setField(field.name, event.target.checked)} />;
+		if (field.type === "select") {
+			return (
+				<select value={form[field.name]} onChange={(event) => setField(field.name, event.target.value)}>
+					<option value="">Choose...</option>
+					{(options[field.name] || []).map((option) => <option key={option._id} value={option._id}>{option[field.optionLabel || "name"]}</option>)}
+				</select>
+			);
+		}
+		if (field.type === "images") {
+			return (
+				<div>
+					<input type="file" accept="image/*" multiple disabled={uploading} onChange={(event) => handleFiles(field, [...event.target.files])} />
+					{uploading && <span> Uploading...</span>}
+					<div className="admin-image-list">
+						{form[field.name].map((image) => (
+							<div key={image.publicId || image.url}>
+								<img src={image.url} alt="" width="68" />
+								<button type="button" onClick={() => setField(field.name, form[field.name].filter((entry) => entry.publicId !== image.publicId))}>Remove</button>
+							</div>
+						))}
+					</div>
+				</div>
+			);
+		}
+		return <input type={field.type} value={form[field.name]} onChange={(event) => setField(field.name, event.target.value)} />;
 	}
 
 	return (
-		<section>
-			<h2>{title}</h2>
-			{error && <p style={{ color: 'crimson' }}>{error}</p>}
-
-			<form onSubmit={handleSubmit} style={{ display: 'grid', gap: 8, maxWidth: 420 }}>
-				<h3>{editingId ? 'Edit' : 'New'}</h3>
-				{fields.map((f) => (
-					<label key={f.name} style={{ display: 'grid', gap: 2 }}>
-						{f.label || f.name}
-						{f.type === 'textarea' && (
-							<textarea value={form[f.name]} onChange={(e) => setField(f.name, e.target.value)} />
-						)}
-						{f.type === 'checkbox' && (
-							<input type="checkbox" checked={!!form[f.name]} onChange={(e) => setField(f.name, e.target.checked)} />
-						)}
-						{f.type === 'select' && (
-							<select value={form[f.name]} onChange={(e) => setField(f.name, e.target.value)}>
-								<option value="">Choose...</option>
-								{(options[f.name] || []).map((o) => (
-									<option key={o._id} value={o._id}>{o[f.optionLabel || 'name']}</option>
-								))}
-							</select>
-						)}
-						{f.type === 'images' && (
-							<div>
-								<input type="file" accept="image/*" multiple disabled={uploading} onChange={(e) => handleFiles(f, [...e.target.files])} />
-								{uploading && <span> Uploading...</span>}
-								<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-									{form[f.name].map((img) => (
-										<div key={img.publicId}>
-											<img src={img.url} alt="" width="80" />
-											<button type="button" onClick={() => setField(f.name, form[f.name].filter((i) => i.publicId !== img.publicId))}>
-												remove
-											</button>
-										</div>
-									))}
-								</div>
-							</div>
-						)}
-						{['text', 'number', 'email'].includes(f.type) && (
-							<input type={f.type} value={form[f.name]} onChange={(e) => setField(f.name, e.target.value)} />
-						)}
+		<section className="admin-resource">
+			<div className="admin-section-heading"><div><p className="eyebrow">Manage catalog</p><h2>{title}</h2></div></div>
+			{error && <p className="form-message error" role="alert">{error}</p>}
+			<form onSubmit={handleSubmit} className="admin-edit-form">
+				<h3>{editingId ? "Edit item" : "Create item"}</h3>
+				{fields.map((field) => (
+					<label className={field.type === "textarea" || field.type === "images" ? "wide-field" : ""} key={field.name}>
+						{field.label || field.name}
+						{renderField(field)}
 					</label>
 				))}
-				<div>
-					<button type="submit" disabled={uploading}>{editingId ? 'Save changes' : 'Create'}</button>
-					{editingId && <button type="button" onClick={reset}>Cancel</button>}
+				<div className="form-actions">
+					<button className="button button-primary" disabled={uploading}>{editingId ? "Save changes" : "Create"}</button>
+					{editingId && <button className="button button-light" type="button" onClick={reset}>Cancel</button>}
 				</div>
 			</form>
-
-			<table style={{ marginTop: 24 }}>
-				<thead>
-					<tr>
-						{columns.map((c) => <th key={c.key}>{c.label || c.key}</th>)}
-						<th></th>
-					</tr>
-				</thead>
-				<tbody>
-					{items.map((item) => (
+			<div className="admin-filter-bar">
+				{filters.map((field) => (
+					<label key={field.name}>{field.label || field.name}
+						{field.type === "select"
+							? <select value={filterValues[field.name] || ""} onChange={(event) => { setPage(1); setFilterValues((previous) => ({ ...previous, [field.name]: event.target.value })); }}><option value="">All</option>{(options[field.name] || []).map((option) => <option key={option._id} value={option._id}>{option[field.optionLabel || "name"]}</option>)}</select>
+							: <input type={field.type || "text"} value={filterValues[field.name] || ""} onChange={(event) => { setPage(1); setFilterValues((previous) => ({ ...previous, [field.name]: event.target.value })); }} />}
+					</label>
+				))}
+				<label>Sort
+					<select value={filterValues.sort || "newest"} onChange={(event) => { setPage(1); setFilterValues((previous) => ({ ...previous, sort: event.target.value })); }}>
+						<option value="newest">Newest</option><option value="oldest">Oldest</option><option value="price">Price: low to high</option><option value="-price">Price: high to low</option><option value="name">Name: A-Z</option>
+					</select>
+				</label>
+			</div>
+			<div className="admin-table-wrap">
+				<table className="admin-table">
+					<thead><tr>{columns.map((column) => <th key={column.key}>{column.label || column.key}</th>)}<th>Actions</th></tr></thead>
+					<tbody>{items.map((item) => (
 						<tr key={item._id}>
-							{columns.map((c) => (
-								<td key={c.key}>{c.render ? c.render(item) : String(item[c.key] ?? '')}</td>
-							))}
-							<td>
-								<button onClick={() => startEdit(item)}>Edit</button>
-								<button onClick={() => handleDelete(item)}>Delete</button>
-							</td>
+							{columns.map((column) => <td key={column.key}>{column.render ? column.render(item) : String(item[column.key] ?? "")}</td>)}
+							<td className="table-actions"><button type="button" onClick={() => startEdit(item)}>Edit</button><button type="button" onClick={() => handleDelete(item)}>Delete</button></td>
 						</tr>
-					))}
-				</tbody>
-			</table>
+					))}</tbody>
+				</table>
+				{items.length === 0 && !error && <p className="admin-empty">No items found.</p>}
+			</div>
+			<div className="pagination"><button type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</button></div>
 		</section>
-	)
+	);
 }
