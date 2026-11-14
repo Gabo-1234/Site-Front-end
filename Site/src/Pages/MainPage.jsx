@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import RegisterForm from "./RegisterForm";
 import { API_URL } from "../Admin/api";
-import "./Main Page.css";
+import "./MainPage.css";
 
-function Home() {
+const Home = () => {
 	const [items, setItems] = useState([]);
 	const [search, setSearch] = useState("");
 	const [loading, setLoading] = useState(true);

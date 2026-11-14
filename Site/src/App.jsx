@@ -1,8 +1,8 @@
 import AdminPage from "./Admin/AdminPage";
-import Home from "./Pages/Main Page";
+import Home from "./Pages/MainPage";
 import ProductPage from "./Pages/ProductPage";
 
-function App() {
+const App = () => {
 	const path = window.location.pathname;
 	if (path === "/admin" || path === "/admin/") return <AdminPage />;
 	const productRoute = path.match(/^\/products\/([^/]+)\/?$/);
